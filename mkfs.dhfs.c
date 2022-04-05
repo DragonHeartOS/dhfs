@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     fwrite(boot_sector, 512, 1, image);
 
     fseek(image, 4, SEEK_SET);
-    fputs("_ECH_FS_", image);
+    fputs("_DH_FS_", image);
     wr_qword(12, blocks);	// blocks
     wr_qword(20, blocks / (100 / reserved_factor)); 	//reserved blocks
     wr_qword(28, bytesperblock);	// block size

@@ -63,56 +63,56 @@ static uint64_t dirstart;
 static uint64_t datastart;
 static uint64_t bytesperblock;
 
-inline static int echfs_fseek(FILE *file, long loc, int mode) {
+inline static int dhfs_fseek(FILE *file, long loc, int mode) {
     return fseek(file, loc + part_offset, mode);
 }
 
 static inline uint8_t rd_byte(uint64_t loc) {
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     return (uint8_t)fgetc(image);
 }
 
 static inline void wr_byte(uint64_t loc, uint8_t x) {
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fputc((int)x, image);
     return;
 }
 
 static inline uint16_t rd_word(uint64_t loc) {
     uint16_t x = 0;
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fread(&x, 2, 1, image);
     return x;
 }
 
 static inline void wr_word(uint64_t loc, uint16_t x) {
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fwrite(&x, 2, 1, image);
     return;
 }
 
 static inline uint32_t rd_dword(uint64_t loc) {
     uint32_t x = 0;
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fread(&x, 4, 1, image);
     return x;
 }
 
 static inline void wr_dword(uint64_t loc, uint32_t x) {
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fwrite(&x, 4, 1, image);
     return;
 }
 
 static inline uint64_t rd_qword(uint64_t loc) {
     uint64_t x = 0;
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fread(&x, 8, 1, image);
     return x;
 }
 
 static inline void wr_qword(uint64_t loc, uint64_t x) {
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fwrite(&x, 8, 1, image);
     return;
 }
@@ -125,7 +125,7 @@ static inline void rd_entry(entry_t *res, uint64_t entry) {
         abort();
     }
 
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fread(res, sizeof(entry_t), 1, image);
 }
 
@@ -137,7 +137,7 @@ static inline void wr_entry(uint64_t entry, entry_t *entry_src) {
         abort();
     }
 
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     fwrite(entry_src, sizeof(entry_t), 1, image);
 }
 
@@ -168,7 +168,7 @@ static uint64_t import_chain(FILE *source) {
         abort();
     }
 
-    echfs_fseek(image, fatstart * bytesperblock, SEEK_SET);
+    dhfs_fseek(image, fatstart * bytesperblock, SEEK_SET);
     uint64_t block = 0;
     for (uint64_t i = 0; i < source_size_blocks; i++) {
         uint64_t vvv;
@@ -177,14 +177,14 @@ static uint64_t import_chain(FILE *source) {
     }
 
     for (uint64_t i = 0; i < source_size_blocks; i++) {
-        echfs_fseek(image, blocklist[i] * bytesperblock, SEEK_SET);
+        dhfs_fseek(image, blocklist[i] * bytesperblock, SEEK_SET);
 
         // copy block
         fwrite(block_buf, 1, fread(block_buf, 1, bytesperblock, source), image);
     }
 
     for (uint64_t i = 0; ; i++) {
-        echfs_fseek(image, fatstart * bytesperblock + blocklist[i] * sizeof(uint64_t), SEEK_SET);
+        dhfs_fseek(image, fatstart * bytesperblock + blocklist[i] * sizeof(uint64_t), SEEK_SET);
         if (i == source_size_blocks - 1) {
             uint64_t vvv = END_OF_CHAIN;
             fwrite(&vvv, sizeof(uint64_t), 1, image);
@@ -209,7 +209,7 @@ static void export_chain(FILE *dest, entry_t src) {
     }
 
     for (cur_block = src.payload; cur_block != END_OF_CHAIN; ) {
-        echfs_fseek(image, (long)(cur_block * bytesperblock), SEEK_SET);
+        dhfs_fseek(image, (long)(cur_block * bytesperblock), SEEK_SET);
         // copy block
         if (((uint64_t)ftell(dest) + bytesperblock) >= src.size) {
             fread(block_buf, src.size % bytesperblock, 1, image);
@@ -243,7 +243,7 @@ static void delete_chain(uint64_t payload) {
 static uint64_t search(const char *name, uint64_t parent, uint8_t type) {
     // returns unique entry #, SEARCH_FAILURE upon failure/not found
     uint64_t loc = (dirstart * bytesperblock);
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     for (uint64_t i = 0; ; i++) {
         entry_t entry;
         fread(&entry, sizeof(entry_t), 1, image);
@@ -326,7 +326,7 @@ static inline uint64_t get_free_id(void) {
     uint64_t i;
 
     uint64_t loc = (dirstart * bytesperblock);
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
 
     for (i = 0; ; i++) {
         entry_t entry;
@@ -359,7 +359,7 @@ static void mkdir_cmd(int argc, char **argv) {
 
     // find empty entry
     uint64_t loc = (dirstart * bytesperblock);
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     for (i = 0; ; i++) {
         entry_t entry_i;
         fread(&entry_i, sizeof(entry_t), 1, image);
@@ -471,7 +471,7 @@ subdir:
 
     // find empty entry
     uint64_t loc = (dirstart * bytesperblock);
-    echfs_fseek(image, (long)loc, SEEK_SET);
+    dhfs_fseek(image, (long)loc, SEEK_SET);
     for (i = 0; ; i++) {
         entry_t entry_i;
         fread(&entry_i, sizeof(entry_t), 1, image);
@@ -573,8 +573,8 @@ static void format_pass1(int argc, char **argv, int quick) {
     blocks = imgsize / bytesperblock;
 
     // write signature
-    echfs_fseek(image, 4, SEEK_SET);
-    fputs("_ECH_FS_", image);
+    dhfs_fseek(image, 4, SEEK_SET);
+    fputs("_DH_FS_", image);
     // total blocks
     wr_qword(12, blocks);
     // directory size
@@ -593,7 +593,7 @@ static void format_pass1(int argc, char **argv, int quick) {
     puts(uuid_str);
 
     if (!quick) {
-        echfs_fseek(image, (RESERVED_BLOCKS * bytesperblock), SEEK_SET);
+        dhfs_fseek(image, (RESERVED_BLOCKS * bytesperblock), SEEK_SET);
         if (verbose) fprintf(stdout, "zeroing");
 
         // zero out the rest of the image
@@ -693,14 +693,14 @@ int main(int argc, char **argv) {
             argc, argv, 1);
 
     char signature[8] = {0};
-    echfs_fseek(image, 4, SEEK_SET);
+    dhfs_fseek(image, 4, SEEK_SET);
     fread(signature, 8, 1, image);
-    if (strncmp(signature, "_ECH_FS_", 8)) {
-        fprintf(stderr, "%s: error: echidnaFS signature missing.\n", argv[0]);
+    if (strncmp(signature, "_DH_FS_", 8)) {
+        fprintf(stderr, "%s: error: DHFS signature missing.\n", argv[0]);
         fclose(image);
         return EXIT_FAILURE;
     }
-    if (verbose) fprintf(stdout, "echidnaFS signature found\n");
+    if (verbose) fprintf(stdout, "DHFS signature found\n");
 
     if (verbose) fprintf(stdout, "image size: %" PRIu64 " bytes\n", imgsize);
 

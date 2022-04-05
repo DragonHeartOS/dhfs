@@ -1,6 +1,13 @@
-echfs-utils
-echfs-fuse
-mkfs.echfs
+dhfs-utils
+dhfs-fuse
+mkfs.dhfs
+*.hdd
+*.img
+*.raw
+*.vdi
+*.vmdk
+*.vhd
+*.vhdx
 *.o
 *.bin
 mnt/

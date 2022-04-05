@@ -50,7 +50,7 @@ struct path_result_t {
     struct path_result_t *next;
 };
 
-struct echfs_handle_t {
+struct dhfs_handle_t {
     uint8_t occupied;
     char path[MAX_PATH_LEN];
     int flags;
@@ -65,7 +65,7 @@ struct path_result_table {
     uint64_t num_elements;
 };
 
-static struct echfs {
+static struct dhfs {
     char *image_path;
     char *mountpoint;
     struct fuse_chan *chan;
@@ -88,9 +88,9 @@ static struct echfs {
     struct path_result_table path_cache;
     struct entry_t *dir_table;
     uint64_t *fat;
-}  echfs;
+}  dhfs;
 
-static struct echfs_handle_t handles[MAX_HANDLES];
+static struct dhfs_handle_t handles[MAX_HANDLES];
 
 static char *internal_strchrnul(const char *s, char c) {
     while (*s) {
@@ -100,8 +100,8 @@ static char *internal_strchrnul(const char *s, char c) {
     return (char *) s;
 }
 
-static void echfs_debug(const char *fmt, ...) {
-#ifdef ECHFS_DEBUG
+static void dhfs_debug(const char *fmt, ...) {
+#ifdef dhfs_DEBUG
     va_list args;
     va_start(args, fmt);
     vfprintf(stdout, fmt, args);
@@ -112,18 +112,18 @@ static void echfs_debug(const char *fmt, ...) {
 }
 
 static void cleanup_fuse() {
-    fuse_unmount(echfs.mountpoint, echfs.chan);
-    fuse_remove_signal_handlers(echfs.session);
+    fuse_unmount(dhfs.mountpoint, dhfs.chan);
+    fuse_remove_signal_handlers(dhfs.session);
 }
 
-static inline int echfs_fseek(FILE *file, long loc, int mode) {
-    return fseek(file, echfs.part_offset + loc, mode);
+static inline int dhfs_fseek(FILE *file, long loc, int mode) {
+    return fseek(file, dhfs.part_offset + loc, mode);
 }
 
 static inline uint16_t rd_word(long loc) {
     uint16_t x = 0;
-    echfs_fseek(echfs.image, loc, SEEK_SET);
-    int ret = fread(&x, 2, 1, echfs.image);
+    dhfs_fseek(dhfs.image, loc, SEEK_SET);
+    int ret = fread(&x, 2, 1, dhfs.image);
     if (ret != 1)
         fprintf(stderr, "error reading word!\n");
     return x;
@@ -131,19 +131,19 @@ static inline uint16_t rd_word(long loc) {
 
 static inline uint64_t rd_qword(long loc) {
     uint64_t x = 0;
-    echfs_fseek(echfs.image, loc, SEEK_SET);
-    int ret = fread(&x, 8, 1, echfs.image);
+    dhfs_fseek(dhfs.image, loc, SEEK_SET);
+    int ret = fread(&x, 8, 1, dhfs.image);
     if (ret != 1)
         fprintf(stderr, "error reading qword!\n");
     return x;
 }
 
 static void rd_entry(struct entry_t *entry, uint64_t pos) {
-    memcpy(entry, echfs.dir_table + pos, sizeof(struct entry_t));
+    memcpy(entry, dhfs.dir_table + pos, sizeof(struct entry_t));
 }
 
 static void wr_entry(struct entry_t *entry, uint64_t pos) {
-    memcpy(echfs.dir_table + pos, entry, sizeof(struct entry_t));
+    memcpy(dhfs.dir_table + pos, entry, sizeof(struct entry_t));
 }
 
 static inline uint64_t get_time() {
@@ -160,13 +160,13 @@ static int update_mtime(struct path_result_t *path_res) {
 }
 
 static int detect_cycle(struct path_result_t* list) {
-#ifdef ECHFS_DEBUG
+#ifdef dhfs_DEBUG
     struct path_result_t *slow_p = list, *fast_p = list;
     while (slow_p && fast_p && fast_p->next) {
         slow_p = slow_p->next;
         fast_p = fast_p->next->next;
         if (slow_p == fast_p) {
-            echfs_debug("Found loop, slow_p is %s, fast_p is %s\n",
+            dhfs_debug("Found loop, slow_p is %s, fast_p is %s\n",
                     slow_p->path, fast_p->path);
             return 1;
         }
@@ -195,14 +195,14 @@ static struct path_result_table init_table(uint64_t size) {
 
 static void rehash_path(const char *path, const char *new) {
     uint64_t hash = hash_str(path);
-    uint64_t offset = hash % echfs.path_cache.size;
+    uint64_t offset = hash % dhfs.path_cache.size;
 
-    struct path_result_t *element = echfs.path_cache.table[offset];
+    struct path_result_t *element = dhfs.path_cache.table[offset];
     struct path_result_t *prev = NULL;
     for (; element; prev = element, element = element->next) {
         if (!strcmp(element->path, new)) {
             if (!prev) {
-                echfs.path_cache.table[offset] = element->next;
+                dhfs.path_cache.table[offset] = element->next;
             } else {
                 prev->next = element->next;
             }
@@ -210,32 +210,32 @@ static void rehash_path(const char *path, const char *new) {
         }
     }
     element->next = NULL;
-    if(detect_cycle(echfs.path_cache.table[offset]))
-        echfs_debug("detected cycle in rehash_path\n");
+    if(detect_cycle(dhfs.path_cache.table[offset]))
+        dhfs_debug("detected cycle in rehash_path\n");
 
     uint64_t new_hash = hash_str(element->path);
-    uint64_t new_offset = new_hash % echfs.path_cache.size;
-    if (!echfs.path_cache.table[new_offset]) {
-        echfs.path_cache.table[new_offset] = element;
+    uint64_t new_offset = new_hash % dhfs.path_cache.size;
+    if (!dhfs.path_cache.table[new_offset]) {
+        dhfs.path_cache.table[new_offset] = element;
     } else {
-        struct path_result_t *it = echfs.path_cache.table[new_offset];
+        struct path_result_t *it = dhfs.path_cache.table[new_offset];
         for (; it->next; it = it->next);
         it->next = element;
     }
-    if(detect_cycle(echfs.path_cache.table[new_offset]))
-        echfs_debug("detected cycle in rehash_path\n");
+    if(detect_cycle(dhfs.path_cache.table[new_offset]))
+        dhfs_debug("detected cycle in rehash_path\n");
 }
 
 static void remove_cached_path(const char *path) {
     uint64_t hash = hash_str(path);
-    uint64_t offset = hash % echfs.path_cache.size;
+    uint64_t offset = hash % dhfs.path_cache.size;
 
-    struct path_result_t *element = echfs.path_cache.table[offset];
+    struct path_result_t *element = dhfs.path_cache.table[offset];
     struct path_result_t *prev = NULL;
     for (; element; prev = element, element = element->next) {
         if (!strcmp(element->path, path)) {
             if (!prev) {
-                echfs.path_cache.table[offset] = element->next;
+                dhfs.path_cache.table[offset] = element->next;
                 free(element);
             } else {
                 prev->next = element->next;
@@ -244,8 +244,8 @@ static void remove_cached_path(const char *path) {
             break;
         }
     }
-    if(detect_cycle(echfs.path_cache.table[offset]))
-        echfs_debug("detected cycle in remove_cached_path with path %s\n",
+    if(detect_cycle(dhfs.path_cache.table[offset]))
+        dhfs_debug("detected cycle in remove_cached_path with path %s\n",
                 path);
 }
 
@@ -262,22 +262,22 @@ static void insert_cached_path(struct path_result_t *path_res,
         element->next = path_res;
     }
     if(detect_cycle(table->table[offset]))
-        echfs_debug("detected cycle in insert_cached_path with path %s\n",
+        dhfs_debug("detected cycle in insert_cached_path with path %s\n",
                 path_res->path);
 
     table->num_elements++;
 }
 
 static void cache_path(struct path_result_t *path_res) {
-    double load_factor = (echfs.path_cache.num_elements + 1) /
-        echfs.path_cache.size;
+    double load_factor = (dhfs.path_cache.num_elements + 1) /
+        dhfs.path_cache.size;
     if (load_factor > 0.75) {
-        echfs_debug("rehashing table!\n");
+        dhfs_debug("rehashing table!\n");
         /* rehash */
-        struct path_result_table new_table = init_table(echfs.path_cache.size
+        struct path_result_table new_table = init_table(dhfs.path_cache.size
                 * 2);
-        for (int i = 0; i < echfs.path_cache.size; i++) {
-            struct path_result_t *element = echfs.path_cache.table[i];
+        for (int i = 0; i < dhfs.path_cache.size; i++) {
+            struct path_result_t *element = dhfs.path_cache.table[i];
             while (element) {
                 struct path_result_t *next = element->next;
                 element->next = NULL;
@@ -285,170 +285,170 @@ static void cache_path(struct path_result_t *path_res) {
                 element = next;
             }
         }
-        free(echfs.path_cache.table);
-        echfs.path_cache = new_table;
+        free(dhfs.path_cache.table);
+        dhfs.path_cache = new_table;
     }
 
-    insert_cached_path(path_res, &echfs.path_cache);
+    insert_cached_path(path_res, &dhfs.path_cache);
 }
 
 static struct path_result_t *get_cached_path(const char *path) {
     uint64_t hash = hash_str(path);
-    uint64_t offset = hash % echfs.path_cache.size;
-    struct path_result_t *result = echfs.path_cache.table[offset];
+    uint64_t offset = hash % dhfs.path_cache.size;
+    struct path_result_t *result = dhfs.path_cache.table[offset];
     for (; result; result = result->next) {
         if (!strcmp(result->path, path)) return result;
     }
     return NULL;
 }
 
-static void *echfs_init(struct fuse_conn_info *conn) {
+static void *dhfs_init(struct fuse_conn_info *conn) {
     (void) conn;
 
     memset(&handles, 0, sizeof(handles));
-    echfs.image = fopen(echfs.image_path, "r+");
-    if (!echfs.image) {
-        fprintf(stderr, "Error opening echfs image %s!\n", echfs.image_path);
+    dhfs.image = fopen(dhfs.image_path, "r+");
+    if (!dhfs.image) {
+        fprintf(stderr, "Error opening dhfs image %s!\n", dhfs.image_path);
         cleanup_fuse();
         exit(1);
     }
 
-    if (echfs.mbr) {
+    if (dhfs.mbr) {
         struct part p;
-        mbr_get_part(&p, echfs.image, echfs.partition);
-        echfs.part_offset = p.first_sect * 512;
-        echfs.image_size  = p.sect_count * 512;
-    } else if (echfs.gpt) {
+        mbr_get_part(&p, dhfs.image, dhfs.partition);
+        dhfs.part_offset = p.first_sect * 512;
+        dhfs.image_size  = p.sect_count * 512;
+    } else if (dhfs.gpt) {
         struct part p;
-        gpt_get_part(&p, echfs.image, echfs.partition);
-        echfs.part_offset = p.first_sect * 512;
-        echfs.image_size  = p.sect_count * 512;
+        gpt_get_part(&p, dhfs.image, dhfs.partition);
+        dhfs.part_offset = p.first_sect * 512;
+        dhfs.image_size  = p.sect_count * 512;
     } else {
-        echfs.part_offset = 0;
-        fseek(echfs.image, 0L, SEEK_END);
-        echfs.image_size = (uint64_t)ftell(echfs.image);
-        echfs_fseek(echfs.image, 0L, SEEK_SET);
+        dhfs.part_offset = 0;
+        fseek(dhfs.image, 0L, SEEK_END);
+        dhfs.image_size = (uint64_t)ftell(dhfs.image);
+        dhfs_fseek(dhfs.image, 0L, SEEK_SET);
     }
-    echfs_debug("echfs image size: %lu\n", echfs.image_size);
+    dhfs_debug("dhfs image size: %lu\n", dhfs.image_size);
 
     char signature[8] = {0};
-    echfs_fseek(echfs.image, 4, SEEK_SET);
-    int ret = fread(signature, 8, 1, echfs.image);
+    dhfs_fseek(dhfs.image, 4, SEEK_SET);
+    int ret = fread(signature, 8, 1, dhfs.image);
     if (ret != 1) {
         fprintf(stderr, "error reading signature!\n");
         cleanup_fuse();
-        fclose(echfs.image);
+        fclose(dhfs.image);
         exit(1);
     }
 
-    if (strncmp(signature, "_ECH_FS_", 8)) {
-        fprintf(stderr, "echdinaFS signature missing!\n");
+    if (strncmp(signature, "_DH_FS_", 8)) {
+        fprintf(stderr, "DragonHeartFS signature missing!\n");
         cleanup_fuse();
-        fclose(echfs.image);
+        fclose(dhfs.image);
         exit(1);
     }
 
-    echfs.fat_start = RESERVED_BLOCKS;
-    echfs.bytes_per_block = rd_qword(28);
-    echfs_debug("echfs block size: %lu\n", echfs.bytes_per_block);
-    if (echfs.image_size % echfs.bytes_per_block) {
+    dhfs.fat_start = RESERVED_BLOCKS;
+    dhfs.bytes_per_block = rd_qword(28);
+    dhfs_debug("dhfs block size: %lu\n", dhfs.bytes_per_block);
+    if (dhfs.image_size % dhfs.bytes_per_block) {
         fprintf(stderr, "image is not block aligned!\n");
         cleanup_fuse();
-        fclose(echfs.image);
+        fclose(dhfs.image);
         exit(1);
     }
 
-    echfs.blocks = echfs.image_size / echfs.bytes_per_block;
-    echfs_debug("echfs block count: %lu\n", echfs.blocks);
+    dhfs.blocks = dhfs.image_size / dhfs.bytes_per_block;
+    dhfs_debug("dhfs block count: %lu\n", dhfs.blocks);
     uint64_t declared_blocks = rd_qword(12);
-    if (declared_blocks != echfs.blocks) {
+    if (declared_blocks != dhfs.blocks) {
         fprintf(stderr, "warning: declared block count mismatch, declared: "
-                "%lu, real: %lu\n", declared_blocks, echfs.blocks);
+                "%lu, real: %lu\n", declared_blocks, dhfs.blocks);
     }
 
-    echfs.sectors_per_block = echfs.bytes_per_block / BYTES_PER_SECT;
-    echfs.entries_per_block = echfs.sectors_per_block * ENTRIES_PER_SECT;
+    dhfs.sectors_per_block = dhfs.bytes_per_block / BYTES_PER_SECT;
+    dhfs.entries_per_block = dhfs.sectors_per_block * ENTRIES_PER_SECT;
 
-    echfs.fat_size = (echfs.blocks * sizeof(uint64_t)) / echfs.bytes_per_block;
-    if ((echfs.blocks * sizeof(uint64_t)) % echfs.bytes_per_block) {
-        echfs.fat_size++;
+    dhfs.fat_size = (dhfs.blocks * sizeof(uint64_t)) / dhfs.bytes_per_block;
+    if ((dhfs.blocks * sizeof(uint64_t)) % dhfs.bytes_per_block) {
+        dhfs.fat_size++;
     }
-    echfs_debug("echfs allocation table size: %lu\n", echfs.fat_size);
-    echfs_debug("echfs allocation table start: %lu\n", echfs.fat_start);
+    dhfs_debug("dhfs allocation table size: %lu\n", dhfs.fat_size);
+    dhfs_debug("dhfs allocation table start: %lu\n", dhfs.fat_start);
 
-    echfs.dir_size = rd_qword(20);
-    echfs_debug("echfs dir size: %lu\n", echfs.dir_size);
-    echfs.dir_start = echfs.fat_start + echfs.fat_size;
-    echfs_debug("echfs dir start: %lu\n", echfs.dir_start);
+    dhfs.dir_size = rd_qword(20);
+    dhfs_debug("dhfs dir size: %lu\n", dhfs.dir_size);
+    dhfs.dir_start = dhfs.fat_start + dhfs.fat_size;
+    dhfs_debug("dhfs dir start: %lu\n", dhfs.dir_start);
 
-    echfs.data_start = RESERVED_BLOCKS + echfs.fat_size + echfs.dir_size;
-    echfs_debug("echfs data start: %lu\n", echfs.data_start);
-    echfs_debug("echfs usable blocks: %lu\n", echfs.blocks -
-            echfs.data_start);
+    dhfs.data_start = RESERVED_BLOCKS + dhfs.fat_size + dhfs.dir_size;
+    dhfs_debug("dhfs data start: %lu\n", dhfs.data_start);
+    dhfs_debug("dhfs usable blocks: %lu\n", dhfs.blocks -
+            dhfs.data_start);
 
-    echfs_debug("image is %s\n", rd_word(510) == 0xAA55 ? "bootable" :
+    dhfs_debug("image is %s\n", rd_word(510) == 0xAA55 ? "bootable" :
             "NOT bootable");
 
-    echfs.path_cache = init_table(1024);
-    echfs.dir_table = malloc(echfs.dir_size * echfs.bytes_per_block);
-    if (!echfs.dir_table) {
+    dhfs.path_cache = init_table(1024);
+    dhfs.dir_table = malloc(dhfs.dir_size * dhfs.bytes_per_block);
+    if (!dhfs.dir_table) {
         fprintf(stderr, "error allocating dir_table!\n");
         cleanup_fuse();
-        fclose(echfs.image);
+        fclose(dhfs.image);
         exit(1);
     }
-    echfs_fseek(echfs.image, echfs.dir_start * echfs.bytes_per_block, SEEK_SET);
-    ret = fread(echfs.dir_table, sizeof(char), echfs.dir_size *
-            echfs.bytes_per_block, echfs.image);
-    if (ret != (echfs.dir_size * echfs.bytes_per_block)) {
+    dhfs_fseek(dhfs.image, dhfs.dir_start * dhfs.bytes_per_block, SEEK_SET);
+    ret = fread(dhfs.dir_table, sizeof(char), dhfs.dir_size *
+            dhfs.bytes_per_block, dhfs.image);
+    if (ret != (dhfs.dir_size * dhfs.bytes_per_block)) {
         fprintf(stderr, "error reading dir_table!\n");
         cleanup_fuse();
-        fclose(echfs.image);
-        free(echfs.dir_table);
+        fclose(dhfs.image);
+        free(dhfs.dir_table);
         exit(1);
     }
 
-    echfs.fat = malloc(echfs.fat_size * echfs.bytes_per_block);
-    if (!echfs.fat) {
+    dhfs.fat = malloc(dhfs.fat_size * dhfs.bytes_per_block);
+    if (!dhfs.fat) {
         fprintf(stderr, "error allocating allocation table!\n");
         cleanup_fuse();
-        fclose(echfs.image);
-        free(echfs.dir_table);
+        fclose(dhfs.image);
+        free(dhfs.dir_table);
         exit(1);
     }
-    echfs_fseek(echfs.image, echfs.fat_start * echfs.bytes_per_block, SEEK_SET);
-    ret = fread(echfs.fat, sizeof(char), echfs.fat_size * echfs.bytes_per_block,
-            echfs.image);
-    if (ret != (echfs.fat_size * echfs.bytes_per_block)) {
+    dhfs_fseek(dhfs.image, dhfs.fat_start * dhfs.bytes_per_block, SEEK_SET);
+    ret = fread(dhfs.fat, sizeof(char), dhfs.fat_size * dhfs.bytes_per_block,
+            dhfs.image);
+    if (ret != (dhfs.fat_size * dhfs.bytes_per_block)) {
         fprintf(stderr, "error reading allocation table!\n");
         cleanup_fuse();
-        fclose(echfs.image);
-        free(echfs.dir_table);
-        free(echfs.fat);
+        fclose(dhfs.image);
+        free(dhfs.dir_table);
+        free(dhfs.fat);
         exit(1);
     }
 
     return NULL;
 }
 
-static void echfs_destroy(void *data) {
+static void dhfs_destroy(void *data) {
     (void) data;
     fprintf(stderr, "cleaning up!\n");
-    echfs_fseek(echfs.image, echfs.dir_start * echfs.bytes_per_block, SEEK_SET);
-    fwrite(echfs.dir_table, sizeof(char), echfs.dir_size * echfs.bytes_per_block,
-            echfs.image);
-    free(echfs.dir_table);
+    dhfs_fseek(dhfs.image, dhfs.dir_start * dhfs.bytes_per_block, SEEK_SET);
+    fwrite(dhfs.dir_table, sizeof(char), dhfs.dir_size * dhfs.bytes_per_block,
+            dhfs.image);
+    free(dhfs.dir_table);
 
-    echfs_fseek(echfs.image, echfs.fat_start * echfs.bytes_per_block, SEEK_SET);
-    fwrite(echfs.fat, sizeof(char), echfs.dir_size * echfs.bytes_per_block,
-            echfs.image);
-    free(echfs.fat);
-    fclose(echfs.image);
+    dhfs_fseek(dhfs.image, dhfs.fat_start * dhfs.bytes_per_block, SEEK_SET);
+    fwrite(dhfs.fat, sizeof(char), dhfs.dir_size * dhfs.bytes_per_block,
+            dhfs.image);
+    free(dhfs.fat);
+    fclose(dhfs.image);
 }
 
 static int is_dir_empty(uint64_t id) {
-    for (uint64_t i = 0; i < (echfs.dir_size * echfs.entries_per_block); i++) {
-        struct entry_t *entry = &echfs.dir_table[i];
+    for (uint64_t i = 0; i < (dhfs.dir_size * dhfs.entries_per_block); i++) {
+        struct entry_t *entry = &dhfs.dir_table[i];
         if (!entry->parent_id) return 1;
         if (entry->parent_id == id) return 0;
     }
@@ -457,8 +457,8 @@ static int is_dir_empty(uint64_t id) {
 }
 
 static uint64_t search(const char *name, uint64_t parent) {
-    for (uint64_t i = 0; i < (echfs.dir_size * echfs.entries_per_block); i++) {
-        struct entry_t *entry = &echfs.dir_table[i];
+    for (uint64_t i = 0; i < (dhfs.dir_size * dhfs.entries_per_block); i++) {
+        struct entry_t *entry = &dhfs.dir_table[i];
         if (!entry->parent_id) return SEARCH_FAILURE;
         if ((entry->parent_id == parent) && (!strcmp(entry->name, name))) {
             return i;
@@ -470,7 +470,7 @@ static uint64_t search(const char *name, uint64_t parent) {
 static struct path_result_t *resolve_path(const char *path) {
     struct path_result_t *path_result = get_cached_path(path);
     if (path_result) {
-        echfs_debug("found cached path %s\n", path);
+        dhfs_debug("found cached path %s\n", path);
         path_result->failure = 0;
         return path_result;
     }
@@ -506,11 +506,11 @@ static struct path_result_t *resolve_path(const char *path) {
         char *seg_buf = malloc(seg_length + 1);
         strncpy(seg_buf, seg, seg_length);
         seg_buf[seg_length] = '\0';
-        echfs_debug("resolve_path(): looking for %s\n", seg_buf);
+        dhfs_debug("resolve_path(): looking for %s\n", seg_buf);
 
         uint64_t search_res = search(seg_buf, path_result->target.payload);
         if (search_res == SEARCH_FAILURE) {
-            echfs_debug("resolve_path(): search failure for %s\n", seg_buf);
+            dhfs_debug("resolve_path(): search failure for %s\n", seg_buf);
             strcpy(path_result->name, seg_buf);
             path_result->parent = path_result->target;
             path_result->failure = 1;
@@ -522,7 +522,7 @@ static struct path_result_t *resolve_path(const char *path) {
         path_result->parent = path_result->target;
         path_result->target = entry;
         path_result->target_entry = search_res;
-        echfs_debug("resolve_path(): found %s\n", seg_buf);
+        dhfs_debug("resolve_path(): found %s\n", seg_buf);
         free(seg_buf);
     } while (*path);
 
@@ -540,8 +540,8 @@ static int get_handle() {
     return -1;
 }
 
-static int echfs_open(const char *file_path, struct fuse_file_info *file_info) {
-    echfs_debug("opening file %s\n", file_path);
+static int dhfs_open(const char *file_path, struct fuse_file_info *file_info) {
+    dhfs_debug("opening file %s\n", file_path);
     struct path_result_t *path_result = resolve_path(file_path);
     if (path_result->failure) return -ENOENT;
     if (path_result->target.type == DIRECTORY_TYPE) return -EISDIR;
@@ -550,7 +550,7 @@ static int echfs_open(const char *file_path, struct fuse_file_info *file_info) {
     if (handle_num < 0) return -ENOMEM;
     file_info->fh = handle_num;
 
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     handle->path_res = path_result;
     handle->occupied = 1;
 
@@ -560,7 +560,7 @@ static int echfs_open(const char *file_path, struct fuse_file_info *file_info) {
     for (i = 1; handle->alloc_map[i - 1] != END_OF_CHAIN; i++) {
         handle->alloc_map = realloc(handle->alloc_map,
                 sizeof(uint64_t) * (i + 1));
-        handle->alloc_map[i] = echfs.fat[handle->alloc_map[i - 1]];
+        handle->alloc_map[i] = dhfs.fat[handle->alloc_map[i - 1]];
     }
 
     handle->total_blocks = i - 1;
@@ -568,9 +568,9 @@ static int echfs_open(const char *file_path, struct fuse_file_info *file_info) {
     return 0;
 }
 
-static int echfs_opendir(const char *dir_path,
+static int dhfs_opendir(const char *dir_path,
         struct fuse_file_info *file_info) {
-    echfs_debug("opening dir %s\n", dir_path);
+    dhfs_debug("opening dir %s\n", dir_path);
     struct path_result_t *path_result = resolve_path(dir_path);
     if (path_result->failure) {
         return -ENOENT;
@@ -589,12 +589,12 @@ static int echfs_opendir(const char *dir_path,
     return 0;
 }
 
-static int echfs_fgetattr(const char *path, struct stat *stat,
+static int dhfs_fgetattr(const char *path, struct stat *stat,
         struct fuse_file_info *file_info) {
-    echfs_debug("fgetattr() on %s\n", path);
+    dhfs_debug("fgetattr() on %s\n", path);
     if (file_info->fh >= MAX_HANDLES) return -EBADF;
     if (!handles[file_info->fh].occupied) return -EBADF;
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     struct path_result_t *path_result = handle->path_res;
 
     stat->st_ino = path_result->target_entry + 1;
@@ -622,8 +622,8 @@ static int echfs_fgetattr(const char *path, struct stat *stat,
     return 0;
 }
 
-static int echfs_getattr(const char *path, struct stat *stat) {
-    echfs_debug("getattr() on %s\n", path);
+static int dhfs_getattr(const char *path, struct stat *stat) {
+    dhfs_debug("getattr() on %s\n", path);
 
     struct path_result_t *path_result = resolve_path(path);
     if (path_result->failure) {
@@ -654,11 +654,11 @@ static int echfs_getattr(const char *path, struct stat *stat) {
     return 0;
 }
 
-static int echfs_readdir(const char *path, void *buf, fuse_fill_dir_t fill,
+static int dhfs_readdir(const char *path, void *buf, fuse_fill_dir_t fill,
         off_t offset, struct fuse_file_info *file_info) {
-    echfs_debug("readdir() on %s and offset %lu\n", path, offset);
+    dhfs_debug("readdir() on %s and offset %lu\n", path, offset);
 
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     if (!handle->occupied || file_info->fh >= MAX_HANDLES) return -EBADF;
     if (handle->path_res->target.type != DIRECTORY_TYPE)
         return -ENOTDIR;
@@ -666,8 +666,8 @@ static int echfs_readdir(const char *path, void *buf, fuse_fill_dir_t fill,
     uint64_t dir_id = handle->path_res->target.payload;
     off_t i = offset;
     for (;; i++) {
-        if (i >= (echfs.dir_size * echfs.entries_per_block)) return 0;
-        struct entry_t *entry = &echfs.dir_table[i];
+        if (i >= (dhfs.dir_size * dhfs.entries_per_block)) return 0;
+        struct entry_t *entry = &dhfs.dir_table[i];
         if (!entry->parent_id) return 0;
         if (entry->parent_id == dir_id) {
             if(fill(buf, entry->name, NULL, i + 1)) return 0;
@@ -676,19 +676,19 @@ static int echfs_readdir(const char *path, void *buf, fuse_fill_dir_t fill,
     return 0;
 }
 
-static int echfs_release(const char *path,
+static int dhfs_release(const char *path,
         struct fuse_file_info *file_info) {
     if (file_info->fh >= MAX_HANDLES) return -EBADF;
     if (!handles[file_info->fh].occupied) return -EBADF;
     if (handles[file_info->fh].path_res->type != FILE_TYPE) return -EISDIR;
 
-    echfs_debug("released handle for %s\n", path);
+    dhfs_debug("released handle for %s\n", path);
     handles[file_info->fh].occupied = 0;
     free(handles[file_info->fh].alloc_map);
     return 0;
 }
 
-static int echfs_releasedir(const char *path,
+static int dhfs_releasedir(const char *path,
         struct fuse_file_info *file_info) {
     if (file_info->fh >= MAX_HANDLES) return -EBADF;
     if (!handles[file_info->fh].occupied) return -EBADF;
@@ -699,29 +699,29 @@ static int echfs_releasedir(const char *path,
     return 0;
 }
 
-static int echfs_read(const char *path, char *buf, size_t to_read,
+static int dhfs_read(const char *path, char *buf, size_t to_read,
         off_t offset, struct fuse_file_info *file_info) {
-    echfs_debug("echfs_read() on %s, %lu\n", path, to_read);
+    dhfs_debug("dhfs_read() on %s, %lu\n", path, to_read);
     if (file_info->fh >= MAX_HANDLES) return -EBADF;
     if (!handles[file_info->fh].occupied) return -EBADF;
     if (handles[file_info->fh].path_res->type != FILE_TYPE) return -EISDIR;
 
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     if ((offset + to_read) >= handle->path_res->target.size)
         to_read = handle->path_res->target.size - offset;
 
     uint64_t progress = 0;
     while (progress < to_read) {
-        uint64_t block = (offset + progress) / echfs.bytes_per_block;
-        uint64_t loc = handle->alloc_map[block] * echfs.bytes_per_block;
+        uint64_t block = (offset + progress) / dhfs.bytes_per_block;
+        uint64_t loc = handle->alloc_map[block] * dhfs.bytes_per_block;
 
         uint64_t chunk = to_read - progress;
-        uint64_t disk_offset = (offset + progress) % echfs.bytes_per_block;
-        if (chunk > echfs.bytes_per_block - disk_offset)
-            chunk = echfs.bytes_per_block - disk_offset;
+        uint64_t disk_offset = (offset + progress) % dhfs.bytes_per_block;
+        if (chunk > dhfs.bytes_per_block - disk_offset)
+            chunk = dhfs.bytes_per_block - disk_offset;
 
-        echfs_fseek(echfs.image, loc + disk_offset, SEEK_SET);
-        int ret = fread(buf + progress, 1, chunk, echfs.image);
+        dhfs_fseek(dhfs.image, loc + disk_offset, SEEK_SET);
+        int ret = fread(buf + progress, 1, chunk, dhfs.image);
         if (ret != chunk)
             return -EIO;
         progress += chunk;
@@ -734,11 +734,11 @@ static int echfs_read(const char *path, char *buf, size_t to_read,
 static uint64_t allocate_new_block(uint64_t prev_block) {
     uint64_t i = 0;
     for (;; i++) {
-        uint64_t block = echfs.fat[i];
+        uint64_t block = dhfs.fat[i];
         if (!block) {
-            echfs.fat[i] = END_OF_CHAIN;
+            dhfs.fat[i] = END_OF_CHAIN;
             if (prev_block) {
-                echfs.fat[prev_block] = i;
+                dhfs.fat[prev_block] = i;
             }
             break;
         }
@@ -746,7 +746,7 @@ static uint64_t allocate_new_block(uint64_t prev_block) {
     return i;
 }
 
-static uint64_t get_block_pos(struct echfs_handle_t *handle, uint64_t block) {
+static uint64_t get_block_pos(struct dhfs_handle_t *handle, uint64_t block) {
     if (block >= handle->total_blocks) {
         uint64_t new_block_count = block + 1;
         handle->alloc_map = realloc(handle->alloc_map,
@@ -768,14 +768,14 @@ static uint64_t get_block_pos(struct echfs_handle_t *handle, uint64_t block) {
     return handle->alloc_map[block];
 }
 
-static int echfs_write(const char *path, const char *buf, size_t to_write,
+static int dhfs_write(const char *path, const char *buf, size_t to_write,
         off_t offset, struct fuse_file_info *file_info) {
-    echfs_debug("echfs_write() on %s\n", path);
+    dhfs_debug("dhfs_write() on %s\n", path);
     if (file_info->fh >= MAX_HANDLES) return -EBADF;
     if (!handles[file_info->fh].occupied) return -EBADF;
     if (handles[file_info->fh].path_res->type != FILE_TYPE) return -EISDIR;
 
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     int ret = update_mtime(handle->path_res);
     if (ret) return ret;
 
@@ -787,16 +787,16 @@ static int echfs_write(const char *path, const char *buf, size_t to_write,
 
     uint64_t progress = 0;
     while (progress < to_write) {
-        uint64_t block = (offset + progress) / echfs.bytes_per_block;
-        uint64_t loc = get_block_pos(handle, block) * echfs.bytes_per_block;
+        uint64_t block = (offset + progress) / dhfs.bytes_per_block;
+        uint64_t loc = get_block_pos(handle, block) * dhfs.bytes_per_block;
 
         uint64_t chunk = to_write - progress;
-        uint64_t buf_offset = (offset + progress) % echfs.bytes_per_block;
-        if (chunk > echfs.bytes_per_block - buf_offset)
-            chunk = echfs.bytes_per_block - buf_offset;
+        uint64_t buf_offset = (offset + progress) % dhfs.bytes_per_block;
+        if (chunk > dhfs.bytes_per_block - buf_offset)
+            chunk = dhfs.bytes_per_block - buf_offset;
 
-        echfs_fseek(echfs.image, loc + buf_offset, SEEK_SET);
-        ret = fwrite(buf + progress, 1, chunk, echfs.image);
+        dhfs_fseek(dhfs.image, loc + buf_offset, SEEK_SET);
+        ret = fwrite(buf + progress, 1, chunk, dhfs.image);
         if (ret != chunk)
             return -EIO;
         progress += chunk;
@@ -809,9 +809,9 @@ static uint64_t find_free_entry() {
     uint64_t i = 0;
     struct entry_t entry;
     for (; ; i++) {
-        if (i >= (echfs.dir_size * echfs.entries_per_block))
+        if (i >= (dhfs.dir_size * dhfs.entries_per_block))
             return SEARCH_FAILURE;
-        entry = echfs.dir_table[i];
+        entry = dhfs.dir_table[i];
         if (!entry.parent_id) break;
         if (entry.parent_id == DELETED_ENTRY) break;
     }
@@ -819,9 +819,9 @@ static uint64_t find_free_entry() {
     return i;
 }
 
-static int echfs_create(const char *path, mode_t mode,
+static int dhfs_create(const char *path, mode_t mode,
         struct fuse_file_info *file_info) {
-    echfs_debug("echfs_create() on %s\n", path);
+    dhfs_debug("dhfs_create() on %s\n", path);
     struct path_result_t *path_res = resolve_path(path);
     if (!path_res->failure)
         return -EEXIST;
@@ -846,7 +846,7 @@ static int echfs_create(const char *path, mode_t mode,
     if (handle_num < 0) return -ENOMEM;
     file_info->fh = handle_num;
 
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     handle->path_res = path_res;
     handle->occupied = 1;
     handle->alloc_map = NULL;
@@ -861,9 +861,9 @@ static uint64_t find_free_dir_id() {
     struct entry_t entry = {0};
 
     for (; ; i++) {
-        if (i >= (echfs.dir_size * echfs.entries_per_block))
+        if (i >= (dhfs.dir_size * dhfs.entries_per_block))
             return SEARCH_FAILURE;
-        entry = echfs.dir_table[i];
+        entry = dhfs.dir_table[i];
         if (!entry.parent_id) break;
         if (entry.parent_id == DELETED_ENTRY) continue;
         if ((entry.type == 1) && (entry.payload == id))
@@ -873,8 +873,8 @@ static uint64_t find_free_dir_id() {
     return id;
 }
 
-static int echfs_mkdir(const char *path, mode_t mode) {
-    echfs_debug("echfs_mkdir() on %s\n", path);
+static int dhfs_mkdir(const char *path, mode_t mode) {
+    dhfs_debug("dhfs_mkdir() on %s\n", path);
     struct path_result_t *path_res = resolve_path(path);
     if (!path_res->failure)
         return -EEXIST;
@@ -900,7 +900,7 @@ static int echfs_mkdir(const char *path, mode_t mode) {
     return 0;
 }
 
-static int echfs_unlink(const char *path) {
+static int dhfs_unlink(const char *path) {
     struct path_result_t *path_res = resolve_path(path);
     if (path_res->failure)
         return -ENOENT;
@@ -911,8 +911,8 @@ static int echfs_unlink(const char *path) {
     uint64_t block = path_res->target.payload;
     if (block != END_OF_CHAIN) {
         for (;;) {
-            uint64_t next_block = echfs.fat[block];
-            echfs.fat[block] = empty;
+            uint64_t next_block = dhfs.fat[block];
+            dhfs.fat[block] = empty;
             if (next_block == END_OF_CHAIN)
                 break;
             block = next_block;
@@ -926,7 +926,7 @@ static int echfs_unlink(const char *path) {
     return 0;
 }
 
-static int echfs_rmdir(const char *path) {
+static int dhfs_rmdir(const char *path) {
     struct path_result_t *path_res = resolve_path(path);
     if (path_res->failure)
         return -ENOENT;
@@ -944,8 +944,8 @@ static int echfs_rmdir(const char *path) {
     return 0;
 }
 
-static int echfs_utimens(const char *path, const struct timespec tv[2]) {
-    echfs_debug("echfs_utimens() on %s\n", path);
+static int dhfs_utimens(const char *path, const struct timespec tv[2]) {
+    dhfs_debug("dhfs_utimens() on %s\n", path);
     struct path_result_t *path_res = resolve_path(path);
 
     path_res->target.atime = tv[0].tv_sec;
@@ -956,35 +956,35 @@ static int echfs_utimens(const char *path, const struct timespec tv[2]) {
 }
 
 //TODO: free the blocks too
-static int echfs_truncate(const char *path, off_t size) {
-    echfs_debug("echfs_truncate() on %s, size %lu\n", path, size);
+static int dhfs_truncate(const char *path, off_t size) {
+    dhfs_debug("dhfs_truncate() on %s, size %lu\n", path, size);
     struct path_result_t *path_res = resolve_path(path);
     path_res->target.size = size;
     wr_entry(&path_res->target, path_res->target_entry);
     return 0;
 }
 
-static int echfs_ftruncate(const char *path, off_t size,
+static int dhfs_ftruncate(const char *path, off_t size,
         struct fuse_file_info *file_info) {
-    echfs_debug("echfs_ftruncate() on %s, size %lu\n", path, size);
+    dhfs_debug("dhfs_ftruncate() on %s, size %lu\n", path, size);
     if (file_info->fh >= MAX_HANDLES) return -EBADF;
     if (!handles[file_info->fh].occupied) return -EBADF;
     if (handles[file_info->fh].path_res->type != FILE_TYPE) return -EISDIR;
 
-    struct echfs_handle_t *handle = &handles[file_info->fh];
+    struct dhfs_handle_t *handle = &handles[file_info->fh];
     handle->path_res->target.size = size;
     wr_entry(&handle->path_res->target,
             handle->path_res->target_entry);
     return 0;
 }
 
-static int echfs_rename(const char *path, const char *new) {
-    echfs_debug("echfs_rename() on %s, %s\n", path, new);
+static int dhfs_rename(const char *path, const char *new) {
+    dhfs_debug("dhfs_rename() on %s, %s\n", path, new);
     struct path_result_t *path_res = resolve_path(path);
     if (path_res->failure)
         return -ENOENT;
 
-    echfs_unlink(new);
+    dhfs_unlink(new);
 
     const char *new_name = strrchr(new, '/');
     if (!new_name)
@@ -1002,25 +1002,25 @@ static int echfs_rename(const char *path, const char *new) {
 }
 
 static struct fuse_operations operations = {
-    .init = echfs_init,
-    .destroy = echfs_destroy,
-    .open = echfs_open,
-    .opendir = echfs_opendir,
-    .fgetattr = echfs_fgetattr,
-    .getattr = echfs_getattr,
-    .readdir = echfs_readdir,
-    .release = echfs_release,
-    .releasedir = echfs_releasedir,
-    .read = echfs_read,
-    .write = echfs_write,
-    .create = echfs_create,
-    .unlink = echfs_unlink,
-    .utimens = echfs_utimens,
-    .truncate = echfs_truncate,
-    .ftruncate = echfs_ftruncate,
-    .mkdir = echfs_mkdir,
-    .rmdir = echfs_rmdir,
-    .rename = echfs_rename,
+    .init = dhfs_init,
+    .destroy = dhfs_destroy,
+    .open = dhfs_open,
+    .opendir = dhfs_opendir,
+    .fgetattr = dhfs_fgetattr,
+    .getattr = dhfs_getattr,
+    .readdir = dhfs_readdir,
+    .release = dhfs_release,
+    .releasedir = dhfs_releasedir,
+    .read = dhfs_read,
+    .write = dhfs_write,
+    .create = dhfs_create,
+    .unlink = dhfs_unlink,
+    .utimens = dhfs_utimens,
+    .truncate = dhfs_truncate,
+    .ftruncate = dhfs_ftruncate,
+    .mkdir = dhfs_mkdir,
+    .rmdir = dhfs_rmdir,
+    .rename = dhfs_rename,
 };
 
 static struct options {
@@ -1049,11 +1049,11 @@ static int option_cb(void *data, const char *arg, int key,
     (void) data;
     switch (key) {
         case FUSE_OPT_KEY_NONOPT:
-            if (!echfs.image_path) {
-                echfs.image_path = strdup(arg);
+            if (!dhfs.image_path) {
+                dhfs.image_path = strdup(arg);
                 return 0;
-            } else if (!echfs.mountpoint) {
-                echfs.mountpoint = strdup(arg);
+            } else if (!dhfs.mountpoint) {
+                dhfs.mountpoint = strdup(arg);
                 return 0;
             }
     }
@@ -1061,11 +1061,11 @@ static int option_cb(void *data, const char *arg, int key,
 }
 
 static void show_help(const char *program_name) {
-    printf("usage: %s [options] <echfs image> <mountpoint>\n", program_name);
+    printf("usage: %s [options] <dhfs image> <mountpoint>\n", program_name);
 }
 
 int main(int argc, char **argv) {
-    echfs.image_path = echfs.mountpoint = 0;
+    dhfs.image_path = dhfs.mountpoint = 0;
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
     if (fuse_opt_parse(&args, &options, option_spec, option_cb)) {
@@ -1079,23 +1079,23 @@ int main(int argc, char **argv) {
         args.argv[0][0] = '\0';
     }
 
-    if (!echfs.image_path || !echfs.mountpoint) {
-        fprintf(stderr, "Please specify echfs image and mountpoint!\n");
+    if (!dhfs.image_path || !dhfs.mountpoint) {
+        fprintf(stderr, "Please specify dhfs image and mountpoint!\n");
         fuse_opt_free_args(&args);
         return 1;
     }
 
-    char *real_mountpoint = realpath(echfs.mountpoint, NULL);
-    char *real_image_path = realpath(echfs.image_path, NULL);
-    free(echfs.mountpoint);
-    free(echfs.image_path);
-    echfs.mountpoint = real_mountpoint;
-    echfs.image_path = real_image_path;
-    echfs.mbr = options.mbr;
-    echfs.gpt = options.gpt;
-    echfs.partition = options.partition;
+    char *real_mountpoint = realpath(dhfs.mountpoint, NULL);
+    char *real_image_path = realpath(dhfs.image_path, NULL);
+    free(dhfs.mountpoint);
+    free(dhfs.image_path);
+    dhfs.mountpoint = real_mountpoint;
+    dhfs.image_path = real_image_path;
+    dhfs.mbr = options.mbr;
+    dhfs.gpt = options.gpt;
+    dhfs.partition = options.partition;
 
-    struct fuse_chan *chan = fuse_mount(echfs.mountpoint, &args);
+    struct fuse_chan *chan = fuse_mount(dhfs.mountpoint, &args);
     if (!chan) {
         fuse_opt_free_args(&args);
         return 1;
@@ -1117,8 +1117,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    echfs.chan = chan;
-    echfs.session = session;
+    dhfs.chan = chan;
+    dhfs.session = session;
 
     fuse_daemonize(options.debug);
     ret = fuse_loop(fuse);
