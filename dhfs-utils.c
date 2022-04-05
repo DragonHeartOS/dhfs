@@ -33,10 +33,6 @@ typedef struct {
     char name[FILENAME_LEN];
     uint64_t atime;
     uint64_t mtime;
-    uint16_t perms;
-    uint16_t owner;
-    uint16_t group;
-    uint64_t ctime;
     uint64_t payload;
     uint64_t size;
 } __attribute__((packed)) entry_t;
@@ -379,10 +375,8 @@ static void mkdir_cmd(int argc, char **argv) {
     if (verbose) fprintf(stdout, "new directory's ID: %" PRIu64 "\n", entry.payload);
     if (verbose) fprintf(stdout, "writing to entry #%" PRIu64 "\n", i);
     uint64_t tm = (uint64_t)time(NULL);
-    entry.ctime = tm;
     entry.atime = tm;
     entry.mtime = tm;
-    entry.perms = 0644; /* TODO: set appropriate permissions somehow */
 
     wr_entry(i, &entry);
 
@@ -468,16 +462,12 @@ subdir:
     entry.size = (uint64_t)ftell(source);
 
 #ifdef __APPLE__
-    entry.ctime = s.st_ctimespec.tv_sec;
     entry.atime = s.st_ctimespec.tv_sec;
     entry.mtime = s.st_mtimespec.tv_sec;
 #else
-    entry.ctime = s.st_ctim.tv_sec;
     entry.atime = s.st_atim.tv_sec;
     entry.mtime = s.st_mtim.tv_sec;
 #endif
-
-    entry.perms = (uint16_t)(s.st_mode & ((1 << 9)-1));
 
     // find empty entry
     uint64_t loc = (dirstart * bytesperblock);

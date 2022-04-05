@@ -1,4 +1,4 @@
-# echidnaFS Specification
+# DragonHeartFS Specification
 
 **Blocks start with block 0, and are addressed as quad-words.**
 
@@ -13,7 +13,7 @@ Reserved blocks. Always. A bigger block size will result in more reserved space.
 **block#0** contains the **identity table** as follows:
 ```x86asm
 times 4 db     ; reserved for jump instruction, or other purposes
-db '_ECH_FS_'  ; echidnaFS signature
+db '_DH_FS_'   ; DragonHeartFS signature
 qword          ; total block count
 qword          ; length of the main directory in blocks (usually 5% of the total blocks)
 qword          ; bytes per block (MUST be a multiple of 512)
@@ -48,10 +48,6 @@ byte          ; Object type (0=file, 1=directory, rest to be implemented)
 times 201 db  ; Zero-terminated ascii string containing the name of the object. max. 200 chars + null byte.
 qword         ; 64-bit unix atime
 qword         ; 64-bit unix mtime
-word          ; Permissions (-------rwxrwxrwx)
-word          ; Owner ID
-word          ; Group ID
-qword         ; 64-bit unix ctime
 qword         ; Starting block (if file), directory ID (if directory)
 qword         ; File size in bytes (0 if directory, shouldn't matter anyways)
 ```
